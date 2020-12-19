@@ -66,6 +66,7 @@ finedata<- mutate(finedata, ECONOMICCOST = PROPDMG * PROPDMGFACTOR + CROPDMG * C
 healthImpact <- with(finedata, aggregate(HEALTHIMP ~ EVTYPE, FUN = sum))
 subset(healthImpact, HEALTHIMP > quantile(HEALTHIMP, prob = 0.95))
 
+finedata$EVTYPE <- toupper(finedata$EVTYPE)
 finedata$EVTYPE[(finedata$EVTYPE == "THUNDERSTORM WINDS")] <- "THUNDERSTORM WIND"
 finedata$EVTYPE[(finedata$EVTYPE == "TSTM WIND")] <- "THUNDERSTORM WIND"
 finedata$EVTYPE[(finedata$EVTYPE == "HURRICANE/TYPHOON")] <- "HURRICANE (TYPHOON)"

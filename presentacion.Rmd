@@ -1,0 +1,162 @@
+---
+title: "Reproducible Research Course Project 2"
+author: "Werner Eduardo Garcia"
+date: "18/12/2020"
+output: html_document
+---
+
+## Synopsis
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
+
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+There is also some documentation of the database available. Here you will find how some of the variables are constructed/defined.
+
+National Weather Service [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
+
+
+```{r library,  include= FALSE}
+library(ggplot2)
+library(dplyr)
+library(R.utils)
+library(lubridate)
+```
+
+## Loading and Processing the Raw Data
+First we need to download and unzip the data using the bzip2 algorithm
+
+```{r, echo = TRUE}
+if (!file.exists("StormData.csv")) { 
+download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", "StormData.csv.bz2")
+bunzip2("StormData.csv.bz2", "StormData.csv")
+}
+```
+
+Now we need to open the data and see its structure
+
+```{r, echo = TRUE}
+rawinfo <- read.csv("StormData.csv")
+
+str(rawinfo)
+
+```
+
+There are 902,297 observations with 37 variables in the file. Only  we need a few columns for our analysis, wich are
+the begining date (BGN_DATE), event type (EVTYPE), FATALITIES and INJURIES), monetary impact on crop and property (PROPDMG and CROPDMG) and their corresponding exponents (PROPDMGEXP and CROPDMGEXP).
+The dataset contains a lot of observations without any information about health and/or economic damages. These observations are excluded from the analysis.
+
+```{r, echo = TRUE}
+finedata<- select(rawinfo, BGN_DATE, EVTYPE, PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP, FATALITIES, INJURIES)
+
+finedata$BGN_DATE <- as.Date(finedata$BGN_DATE, "%m/%d/%Y")
+finedata$YEAR <- year(finedata$BGN_DATE)
+
+finedata <- filter(finedata, PROPDMG > 0 | CROPDMG > 0 | FATALITIES > 0 | INJURIES > 0)
+```
+
+Next we notice that Property damage estimates were entered as actual dollar amounts (the variable PROPDMG). But they were rounded to three significant digits, followed by an alphabetical character signifying the magnitude of the number, i.e., 1.55B for $1,550,000,000. Alphabetical characters used to signify magnitude include “K” for thousands, “M” for millions, and “B” for billions. to fix this we create a column CROPDMGFACTOR with the numeric value that
+corresponds to its factor
+
+```{r, echo = TRUE}
+finedata$CROPDMGFACTOR[(finedata$CROPDMGEXP == "")] <- 1
+finedata$CROPDMGFACTOR[(finedata$CROPDMGEXP == "?")] <- 1
+finedata$CROPDMGFACTOR[(finedata$CROPDMGEXP == "0")] <- 1
+finedata$CROPDMGFACTOR[(finedata$CROPDMGEXP == "2")] <- 100
+finedata$CROPDMGFACTOR[(finedata$CROPDMGEXP == "K")] <- 1000
+finedata$CROPDMGFACTOR[(finedata$CROPDMGEXP == "M")] <- 10^6
+finedata$CROPDMGFACTOR[(finedata$CROPDMGEXP == "B")] <- 10^9
+
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "")] <- 1
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "-")] <- 1
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "?")] <- 1
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "+")] <- 1
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "0")] <- 1
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "1")] <- 10
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "2")] <- 100
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "3")] <- 1000
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "4")] <- 10^4
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "5")] <- 10^5
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "6")] <- 10^6
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "7")] <- 10^7
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "8")] <- 10^8
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "H")] <- 100
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "K")] <- 1000
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "M")] <- 10^6
+finedata$PROPDMGFACTOR[(finedata$PROPDMGEXP == "B")] <- 10^9
+```
+
+Now we can make estimates, first for this assignment there is no difference between fatalities and injuries, so we are going to join in a new variable **HEALTHIMP**.
+A similar circumstance happens  for the economic impact. Both crop and property damages are multiplied by their corresponding factor and added to a new variable **ECONOMICCOST**.
+
+```{r, echo = TRUE}
+finedata<- mutate(finedata, HEALTHIMP = FATALITIES + INJURIES)
+finedata<- mutate(finedata, ECONOMICCOST = PROPDMG * PROPDMGFACTOR + CROPDMG * CROPDMGFACTOR)
+```
+
+Before we begin to plot let's check if all the event variables are well described. according to National Weather Service Storm Data Documentation there must be 48 events (that is a lot of variables for a bar graph), lets take a look for the more significant of them, maybe the ones that represents the 95% of human impacts.
+
+```{r, echo = TRUE}
+healthImpact <- with(finedata, aggregate(HEALTHIMP ~ EVTYPE, FUN = sum))
+subset(healthImpact, HEALTHIMP > quantile(HEALTHIMP, prob = 0.95))
+```
+
+after this exercise we notice that are to many events that represent the same but with a little difference in the name, for fix this we are going to capitalize the EVTYPE and fix a few terms
+```{r, echo = TRUE}
+finedata$EVTYPE <- toupper(finedata$EVTYPE)
+finedata$EVTYPE[(finedata$EVTYPE == "THUNDERSTORM WINDS")] <- "THUNDERSTORM WIND"
+finedata$EVTYPE[(finedata$EVTYPE == "TSTM WIND")] <- "THUNDERSTORM WIND"
+finedata$EVTYPE[(finedata$EVTYPE == "HURRICANE/TYPHOON")] <- "HURRICANE (TYPHOON)"
+finedata$EVTYPE[(finedata$EVTYPE == "RIP CURRENTS")] <- "RIP CURRENT"
+finedata$EVTYPE[(finedata$EVTYPE == "WILD/FOREST FIRE")] <- "WILDFIRE"
+```
+Now we have less events and the names according to our reference documentation.
+
+## Results
+
+### Health Impact
+
+The top 10 events with the highest total fatalities and injuries are shown graphically.
+
+
+
+```{r, echo = TRUE}
+healthImpact <- finedata %>% 
+                group_by(EVTYPE) %>% 
+                summarise(HEALTHIMP = sum(HEALTHIMP)) %>% 
+                arrange(desc(HEALTHIMP))
+
+g <- ggplot(healthImpact[1:10,], aes(x=reorder(EVTYPE, -HEALTHIMP),y=HEALTHIMP,color=EVTYPE)) + 
+      geom_bar(stat="identity", aes(fill=EVTYPE)) + 
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+      xlab("Event") + ylab("Number of fatalities and injuries") +
+      theme(legend.position="none") +
+      ggtitle("Fatalities and injuries in the US caused by severe weather events")
+g
+```
+
+As we can see in the Graphic, for a lot of difference the event that causes more human impact is **Tornado**
+
+### Economic Impact
+
+The top 10 events with the highest total economic damages (property and crop combined) are shown graphically.
+
+
+
+```{r, echo = TRUE}
+economicCost <- finedata %>% 
+                group_by(EVTYPE) %>% 
+                summarise(ECONOMICCOST = sum(ECONOMICCOST)) %>% 
+                arrange(desc(ECONOMICCOST))
+
+g <- ggplot(economicCost[1:10,], aes(x=reorder(EVTYPE, -ECONOMICCOST),y=ECONOMICCOST,color=EVTYPE)) + 
+      geom_bar(stat="identity", aes(fill=EVTYPE)) + 
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+      xlab("Event") + ylab("Economic cost in US$") +
+      theme(legend.position="none") +
+      ggtitle("Economic cost in the US caused by severe weather events")
+g
+```
+
+As we can see in the Graphic, the event that causes more economic impact is **Flood**
+
